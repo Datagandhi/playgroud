@@ -1,79 +1,76 @@
 {# --------------------------------------------
-# Main macro - Unified RPI Calculation
+# Compact RPI Macro - Produces same compiled output
 # -------------------------------------------- #}
 {% macro calculate_rpi_increase(
     network, connection_date, claim_month, base_mrc, claim_fy_month
 ) %}
 
-    {# ---------- Define Rate Rules ---------- #}
-    
-    {# O2: Uses FY start as cutoff #}
+    {# Rate definitions #}
     {% set o2_rates = [
-        {"fy_start": "2022-04-01", "cutoff": "2022-04-01", "rate": 1.117},
-        {"fy_start": "2023-04-01", "cutoff": "2023-04-01", "rate": 1.173},
-        {"fy_start": "2024-04-01", "cutoff": "2024-04-01", "rate": 1.088}
+        {"fy": "2022-04-01", "cut": "2022-04-01", "r": 1.117},
+        {"fy": "2023-04-01", "cut": "2023-04-01", "r": 1.173},
+        {"fy": "2024-04-01", "cut": "2024-04-01", "r": 1.088},
     ] %}
-    
-    {# Vodafone: Uses Jan 31 cutoff for April increase #}
+
     {% set vf_rates = [
-        {"fy_start": "2022-04-01", "cutoff": "2022-01-31", "rate": 1.093},
-        {"fy_start": "2023-04-01", "cutoff": "2023-01-31", "rate": 1.144},
-        {"fy_start": "2024-04-01", "cutoff": "2024-01-31", "rate": 1.079},
-        {"fy_start": "2025-04-01", "cutoff": "2025-01-31", "rate": 1.069}
+        {"fy": "2022-04-01", "cut": "2022-01-31", "r": 1.093},
+        {"fy": "2023-04-01", "cut": "2023-01-31", "r": 1.144},
+        {"fy": "2024-04-01", "cut": "2024-01-31", "r": 1.079},
+        {"fy": "2025-04-01", "cut": "2025-01-31", "r": 1.069},
     ] %}
-    
-    {# Select appropriate rate table #}
-    {% set rate_table = o2_rates if network == "'O2'" else vf_rates %}
-    
-    {# Vodafone transition date #}
-    {% set vf_transition = "2024-07-02" %}
-    
-    {# ---------- Calculate Adjusted MRC ---------- #}
-    
-    {% set calculation %}
+
+    {% set rates = o2_rates if network == "'O2'" else vf_rates %}
+    {% set is_o2 = network == "'O2'" %}
+    {% set vf_post = (
+        "CONNECTIONDATE >= to_date('2024-07-02')" if not is_o2 else "1=0"
+    ) %}
+
+    {# Main calculation #}
     round(
         case
-            {# Vodafone post-transition: skip percentage logic, go straight to fixed adds #}
-            when {{ network }} = 'Vodafone' 
-                 and {{ connection_date }} >= to_date('{{ vf_transition }}')
+            when
+                {{ network }} = 'Vodafone'
+                and {{ connection_date }} >= to_date('2024-07-02')
             then
-                {{ base_mrc }}
-                + case
+                {{ base_mrc }} + case
                     when {{ claim_fy_month }} >= to_date('2025-04-01')
-                    then (
-                        floor(datediff(month, to_date('2025-04-01'), {{ claim_fy_month }}) / 12) * 1.8
+                    then
+                        floor(
+                            datediff(month, to_date('2025-04-01'), {{ claim_fy_month }})
+                            / 12
+                        )
+                        * 1.8
                         + 1.8
-                    )
                     else 0
-                  end
-            
-            {# Standard logic: O2 or Vodafone pre-transition #}
+                end
             else
                 {{ base_mrc }}
-                {# Apply cumulative percentage increases #}
-                {% for r in rate_table %}
-                * case 
-                    when {{ connection_date }} < to_date('{{ r.cutoff }}')
-                         and {{ claim_fy_month }} >= to_date('{{ r.fy_start }}')
-                    then {{ r.rate }}
-                    else 1.0
-                  end
-                {% endfor %}
-                {# Add fixed £1.80 from Apr 2025 for O2 (Vodafone pre-transition doesn't get this) #}
-                {% if network == "'O2'" %}
-                + case
-                    when {{ claim_fy_month }} >= to_date('2025-04-01')
-                    then (
-                        floor(datediff(month, to_date('2025-04-01'), {{ claim_fy_month }}) / 12) * 1.8
-                        + 1.8
-                    )
-                    else 0
-                  end
-                {% endif %}
-        end
-    , 2)
-    {% endset %}
-    
-    {{ calculation }}
+                {%- for rate in rates %}
+                    * case
+                        when
+                            {{ connection_date }} < to_date('{{ rate.cut }}')
+                            and {{ claim_fy_month }} >= to_date('{{ rate.fy }}')
+                        then {{ rate.r }}
+                        else 1.0
+                    end
+                {%- endfor %}
+                {%- if is_o2 %}
+                    + case
+                        when {{ claim_fy_month }} >= to_date('2025-04-01')
+                        then
+                            floor(
+                                datediff(
+                                    month, to_date('2025-04-01'), {{ claim_fy_month }}
+                                )
+                                / 12
+                            )
+                            * 1.8
+                            + 1.8
+                        else 0
+                    end
+                {%- endif %}
+        end,
+        2
+    )
 
 {% endmacro %}
