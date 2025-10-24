@@ -60,7 +60,7 @@ with
 
     ),
     commissions as (
-        select vat, commission_rate_1, commission_rate_2,active_date,end_date
+        select vat, commission_rate_1, commission_rate_2, active_date, end_date
         from {{ source("peakai", "commission_reconciliation_rate") }}
         where operator = 'O2'
     ),
@@ -89,17 +89,17 @@ with
     ),
     monthseries as (
         select
-            fs.opportunitynumber,
+            fs.opportunity_number,
             fs.usi,
             fs.ctn,
-            fs.connectiondate,
-            fs.linerental,
+            fs.connection_date,
+            fs.LINE_RENTAL,
             fs.network,
             fs.product_segment,
             dateadd(
-                month, n.number, to_date(to_char(connectiondate, 'YYYY-MM') || '-01')
+                month, n.number, to_date(to_char(connection_date, 'YYYY-MM') || '-01')
             ) as claimmonth,
-            {{ get_start_of_fy('CLAIMMONTH') }} as claim_start_of_fy,
+            {{ get_start_of_fy("CLAIMMONTH") }} as claim_start_of_fy,
             n.number + 1 as monthnumber
         from salesdata fs
         join
@@ -108,23 +108,27 @@ with
                 from table(generator(rowcount => 36))
             ) n
             on true
-        -- where
-        --     dateadd(month, n.number, connectiondate) <= (
-        --         select
-        --             last_day(
-        --                 max(perioddateconverted)
-        --             ) as max_month_eom
-        --         from paymentdata
-        --     )
+    -- where
+    -- dateadd(month, n.number, CONNECTION_DATE) <= (
+    -- select
+    -- last_day(
+    -- max(PERIOD_DATE_CONVERTED)
+    -- ) as max_month_eom
+    -- from paymentdata
+    -- )
     ),
     commissionwithrpi as (
-        select {{ calculate_rpi_increase(
-    network="'O2'",
-    connection_date="CONNECTIONDATE",
-    claim_month="CLAIMMONTH",
-    base_mrc="LINERENTAL",
-    claim_start_of_fy = "CLAIM_START_OF_FY"
-) }} AS uplifted_mrc,ms.*, ms.linerental as linerentaladjusted from monthseries ms
+        select
+            {{
+                calculate_rpi_increase(
+                    network="'O2'",
+                    connection_date="CONNECTION_DATE",
+                    claim_month="CLAIMMONTH",
+                    base_mrc="LINE_RENTAL",
+                    claim_start_of_fy="CLAIM_START_OF_FY",
+                )
+            }} as uplifted_mrc, ms.*, ms.LINE_RENTAL as linerentaladjusted
+        from monthseries ms
     ),
     commissioncalc as (
         select
@@ -132,7 +136,7 @@ with
             c.vat,
             c.commission_rate_1,
             c.commission_rate_2,
-            round(ms.linerentaladjusted / 1+c.vat, 2) as netmrc,
+            round(ms.linerentaladjusted / 1 + c.vat, 2) as netmrc,
             case
                 when monthnumber between 1 and 24
                 then (ms.linerentaladjusted * c.commission_rate_1) / c.vat
@@ -140,22 +144,27 @@ with
                 then (ms.linerentaladjusted * c.commission_rate_2) / c.vat
             end as expectedcommission_base
         from commissionwithrpi ms
-        left join commissions c on c.active_date > ms.claimmonth and c.end_date >= ms.claimmonth
+        left join
+            commissions c
+            on c.active_date > ms.claimmonth
+            and c.end_date >= ms.claimmonth
     ),
     prorated as (
         select
             *,
             round(
                 case
-                    when monthnumber = 1 and day(connectiondate) > 1
+                    when monthnumber = 1 and day(connection_date) > 1
                     then
                         round(
                             (
-                                datediff(day, connectiondate, last_day(connectiondate))
+                                datediff(
+                                    day, connection_date, last_day(connection_date)
+                                )
                                 + 1
                             )
                             * expectedcommission_base
-                            / day(last_day(connectiondate)),
+                            / day(last_day(connection_date)),
                             4
                         )
                     else expectedcommission_base
@@ -199,7 +208,7 @@ with
                 case
                     when
                         wu.last_upgrade_date is not null
-                        and datediff(month, connectiondate, wu.last_upgrade_date) >= 21
+                        and datediff(month, connection_date, wu.last_upgrade_date) >= 21
                     then 0
                     else expectedcommission_afterdisconnection
                 end,
@@ -208,7 +217,7 @@ with
             case
                 when
                     wu.last_upgrade_date is not null
-                    and datediff(month, connectiondate, wu.last_upgrade_date) < 21
+                    and datediff(month, connection_date, wu.last_upgrade_date) < 21
                 then 'FTU'
                 else null
             end as ftu_flag
@@ -224,8 +233,7 @@ with
                 case
                     when
                         bmb.billed_status = 'NON BILLED'
-                        and claimmonth
-                        = bmb.periodstartofmonth
+                        and claimmonth = bmb.periodstartofmonth
                     then 0
                     else expectedcommission_afterupgrade
                 end,
@@ -240,10 +248,10 @@ with
     ),
     withpayments as (
         select
-            wn.opportunitynumber,
+            wn.opportunity_number,
             wn.usi,
             wn.ctn,
-            wn.connectiondate,
+            wn.connection_date,
             wn.linerentaladjusted,
             wn.network,
             wn.claimmonth,
@@ -273,17 +281,17 @@ with
             pay.mpn,
             pay.lvl5,
             pay.sos_code,
-            coalesce(pay.perioddateconverted, wn.claimmonth) as inputfilter
+            coalesce(pay.PERIOD_DATE_CONVERTED, wn.claimmonth) as inputfilter
         from withnonbilling wn
         left join
             paymentdata pay
             on wn.usi = pay.usi
-            and wn.claimmonth = pay.perioddateconverted
+            and wn.claimmonth = pay.PERIOD_DATE_CONVERTED
         group by
-            wn.opportunitynumber,
+            wn.opportunity_number,
             wn.usi,
             wn.ctn,
-            wn.connectiondate,
+            wn.connection_date,
             wn.linerentaladjusted,
             wn.network,
             wn.claimmonth,
@@ -306,7 +314,7 @@ with
             pay.mpn,
             pay.lvl5,
             pay.sos_code,
-            pay.perioddateconverted
+            pay.PERIOD_DATE_CONVERTED
     ),
     withdisconnectionadjustments as (
         select
@@ -343,7 +351,7 @@ with
                 then
                     case
                         when
-                            date_trunc('MONTH', last_upgrade_date) >= connectiondate
+                            date_trunc('MONTH', last_upgrade_date) >= connection_date
                             and date_trunc('MONTH', last_upgrade_date)
                             <= date_trunc('MONTH', claimmonth)
                         then 'Customer Upgraded'
@@ -378,50 +386,68 @@ with
     )
 
 -- select
---     paymentstatus,
---     wc.usi,
---     ctn as mpn,
---     opportunitynumber as ordernumber,
---     connectiondate,
---     claimtype,
---     claimmonth,
---     case
---         when ftu_flag = 'FTU' then 'FTU Compensation' else 'Postpay Revenue Share'
---     end as paymenttype,
---     case
---         when product_segment = 'New Contract'
---         then 'Connection'
---         when product_segment = 'Upgrade'
---         then 'Resign'
---         else product_segment
---     end as eventtype,
---     adjustedcommission as expectedtotalvalue,
---     commissionpaid as valuepaid,
---     tmpval.firstmissingrevenuesharemonth,
---     tmpval.lastmissingrevsharemonth as revenuesharemonthmissingto,
---     tmpval1.firstmissingrevenuesharemonth as firstmissingftucompensationmonth,
---     tmpval1.lastmissingrevsharemonth as ftucompensationmonthmissingto,
---     case
---         when claimtype = 'Missing Payment'
---         then 'No payment found'
---         when claimtype = 'Underpaid'
---         then
---             'Underpaid by '
---             || cast(round(expectedcommission, 2) - round(commissionpaid, 2) as string)
---         else 'Paid in full'
---     end as comment,
---     coalesce(lvl5, '5L6890') as level5code,
---     coalesce(sos_code, 'R23') as soscode,
---     inputfilter
+-- paymentstatus,
+-- wc.usi,
+-- ctn as mpn,
+-- OPPORTUNITY_NUMBER as ordernumber,
+-- CONNECTION_DATE,
+-- claimtype,
+-- claimmonth,
+-- case
+-- when ftu_flag = 'FTU' then 'FTU Compensation' else 'Postpay Revenue Share'
+-- end as paymenttype,
+-- case
+-- when product_segment = 'New Contract'
+-- then 'Connection'
+-- when product_segment = 'Upgrade'
+-- then 'Resign'
+-- else product_segment
+-- end as eventtype,
+-- adjustedcommission as expectedtotalvalue,
+-- commissionpaid as valuepaid,
+-- tmpval.firstmissingrevenuesharemonth,
+-- tmpval.lastmissingrevsharemonth as revenuesharemonthmissingto,
+-- tmpval1.firstmissingrevenuesharemonth as firstmissingftucompensationmonth,
+-- tmpval1.lastmissingrevsharemonth as ftucompensationmonthmissingto,
+-- case
+-- when claimtype = 'Missing Payment'
+-- then 'No payment found'
+-- when claimtype = 'Underpaid'
+-- then
+-- 'Underpaid by '
+-- || cast(round(expectedcommission, 2) - round(commissionpaid, 2) as string)
+-- else 'Paid in full'
+-- end as comment,
+-- coalesce(lvl5, '5L6890') as level5code,
+-- coalesce(sos_code, 'R23') as soscode,
+-- inputfilter
 -- from withclaims wc
 -- left join tmpval on tmpval.usi = wc.usi
 -- left join tmpval1 on tmpval1.usi = wc.usi
 -- where
---     (
---         tmpval.firstmissingrevenuesharemonth is not null
---         or tmpval1.firstmissingrevenuesharemonth is not null
---     )
---     and claimtype in ('Missing Payment', 'Underpaid')  -- AND inputfilter BETWEEN :P_STARTDATE AND :P_ENDDATE;
+-- (
+-- tmpval.firstmissingrevenuesharemonth is not null
+-- or tmpval1.firstmissingrevenuesharemonth is not null
+-- )
+-- and claimtype in ('Missing Payment', 'Underpaid')  -- AND inputfilter BETWEEN
+-- :P_STARTDATE AND :P_ENDDATE;
+select *,
+floor(datediff(month, to_date('2025-04-01'),claim_start_of_fy ) / 12)
+                * 1.8
+                + 1.8  as orginal,
+                floor(datediff(month,to_date(
+        case when month(connection_date ) >= 4
+            then to_char(year(connection_date)+1) || '-04-01'
+            else to_char(year(connection_date)) || '-04-01'
+        end
+    ),claim_start_of_fy ) / 12)
+                * 1.8
+                + 1.8 as new,
+        case when month(connection_date ) >= 4
+            then to_char(year(connection_date)+1) || '-04-01'
+            else to_char(year(connection_date)) || '-04-01'
+        end as months
 
-select *
-from commissionwithrpi where opportunitynumber = '50106509.00' order by claimmonth asc
+from commissionwithrpi
+where opportunity_number = '50106509.00'
+order by claimmonth asc
