@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: peakai
+    database: ao_tech_silver
+    schema: peakai
+    tables:
+      - name: ao_internal
+        description: "Source contains AO netsuite sales data"
+        identifier: ao_internal
+      - name: three_mpf01_dealer_statement
+        description: "Source contains Three dealer statement data"
+        identifier: three_mpf01_dealer_statement
+      - name: postpay_revshare
+        description: "Source contains O2 post pay revenue share data"
+        identifier: postpay_revshare
+      - name: mpd_ftu_compensation
+        description: "Source contains O2 MPD FTU COMPENSATION data"
+        identifier: mpd_ftu_compensation
+      - name: mpd_disconnection_report
+        description: "Source contains O2 disconnection report data"
+        identifier: mpd_disconnection_report
+      - name: mpd_base_movement_report
+        description: "Source contains O2 base movement report data"
+        identifier: mpd_base_movement_report
+      - name: commission_reconciliation_rate
+        description: "Source contains configurable commission rates"
+        identifier: commission_reconciliation_rate
